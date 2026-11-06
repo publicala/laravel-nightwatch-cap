@@ -42,6 +42,13 @@
             "Publicala\\NightwatchCap\\Tests\\": "tests/"
         }
     },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "Publicala\\NightwatchCap\\NightwatchCapServiceProvider"
+            ]
+        }
+    },
     "config": {
         "sort-packages": true,
         "allow-plugins": {
