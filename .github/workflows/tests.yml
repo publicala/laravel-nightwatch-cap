@@ -1,0 +1,71 @@
+name: Tests
+
+# Reusable body for the test matrix. The orchestrator (ci.yml) owns the event
+# routing and the needs DAG. This file carries only the job bodies.
+
+on:
+  workflow_call:
+
+jobs:
+  gate:
+    name: Gate · PHP 8.4 · Laravel 13
+    runs-on: depot-ubuntu-24.04
+    # A run takes about a minute. Without a limit, a stuck test holds the runner
+    # for GitHub's 6-hour default.
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup PHP (static + pcov)
+        uses: publicala/php-ci-static@46d4c47d646f4012db81644a76a8e8e8a41201a8 # v1
+        with:
+          php-version: '8.4'
+          coverage: pcov
+
+      - run: composer update --no-interaction --prefer-dist
+
+      - name: Pint + Rector (check only)
+        run: composer run-script test:lint
+
+      - name: PHPStan (level 8)
+        run: composer run-script test:types
+
+      - name: Type coverage (100%)
+        run: composer run-script test:type-coverage
+
+      - name: Code coverage (100%)
+        run: composer run-script test:coverage
+
+  matrix:
+    name: PHP ${{ matrix.php }} · Laravel ${{ matrix.laravel }} · Nightwatch ${{ matrix.nightwatch }}
+    runs-on: depot-ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { php: '8.4', laravel: '12.*', nightwatch: '^1.30' }
+          - { php: '8.5', laravel: '13.*', nightwatch: '^1.30' }
+          # The oldest release of each major and of Nightwatch the package supports.
+          - { php: '8.4', laravel: '12.61.*', nightwatch: '1.30.0' }
+          - { php: '8.4', laravel: '13.0.*', nightwatch: '1.30.0' }
+    env:
+      # Older pinned releases can carry a security advisory. The package supports
+      # what its users run, so test them anyway.
+      COMPOSER_NO_SECURITY_BLOCKING: 1
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup PHP (static)
+        uses: publicala/php-ci-static@46d4c47d646f4012db81644a76a8e8e8a41201a8 # v1
+        with:
+          php-version: ${{ matrix.php }}
+
+      - name: Install dependencies
+        run: |
+          composer require --no-interaction --no-update --dev "laravel/framework:${{ matrix.laravel }}" "laravel/nightwatch:${{ matrix.nightwatch }}"
+          composer update --no-interaction --prefer-dist --with-all-dependencies
+
+      - run: composer show --direct
+
+      - run: vendor/bin/pest
