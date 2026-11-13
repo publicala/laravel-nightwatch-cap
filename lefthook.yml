@@ -6,7 +6,7 @@ output:
   - execution_out
 
 pre-commit:
-  parallel: true
+  parallel: false
   commands:
     "fix:rector":
       priority: 1
