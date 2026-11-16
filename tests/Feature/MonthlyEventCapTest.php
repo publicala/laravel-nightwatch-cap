@@ -10,7 +10,7 @@ use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\RateLimiter as RateLimiterFacade;
 use Laravel\Nightwatch\Events\IngestingEvents;
-use Publicala\NightwatchCap\MonthlyEventCounter;
+use Publicala\NightwatchCap\MonthlyEventCap;
 
 /**
  * @param  list<string>  $types
@@ -58,7 +58,7 @@ it('does not count user records against the limit', function (): void {
 });
 
 it('caps at one million events a month when the application sets no limit', function (): void {
-    RateLimiterFacade::increment('nightwatch-events:2026-11', amount: MonthlyEventCounter::DEFAULT_LIMIT - 1);
+    RateLimiterFacade::increment('nightwatch-events:2026-11', amount: MonthlyEventCap::DEFAULT_LIMIT - 1);
 
     expect(Config::has('nightwatch.monthly_event_limit'))->toBeFalse()
         ->and(Event::until(requests(1)))->toBeNull()

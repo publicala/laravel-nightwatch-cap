@@ -15,6 +15,8 @@ use Throwable;
  */
 final readonly class MonthlyEventCap
 {
+    public const int DEFAULT_LIMIT = 1_000_000;
+
     public function __construct(private MonthlyEventCounter $counter)
     {
         //

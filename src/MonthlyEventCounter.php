@@ -16,8 +16,6 @@ use Illuminate\Support\Facades\Date;
  */
 final readonly class MonthlyEventCounter
 {
-    public const int DEFAULT_LIMIT = 1_000_000;
-
     private const int DECAY_SECONDS = 60 * 60 * 24 * 31;
 
     public function __construct(
@@ -29,7 +27,7 @@ final readonly class MonthlyEventCounter
 
     public function limit(): int
     {
-        return $this->config->integer('nightwatch.monthly_event_limit', self::DEFAULT_LIMIT);
+        return $this->config->integer('nightwatch.monthly_event_limit', MonthlyEventCap::DEFAULT_LIMIT);
     }
 
     /**
