@@ -25,8 +25,8 @@ final readonly class MonthlyEventCounter
     private const int ALERT_DECAY_SECONDS = 60 * 60 * 24 * 32;
 
     /**
-     * Shorter than the five minutes between scheduled runs, so the next run finds
-     * the lock gone despite a few seconds of scheduler jitter.
+     * Long enough to cover every server that runs the same scheduled minute, and
+     * far shorter than the hour between scheduled runs.
      */
     private const int ALERT_LOCK_SECONDS = 60 * 4;
 
