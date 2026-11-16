@@ -4,6 +4,12 @@ All notable changes to `publicala/laravel-nightwatch-cap`.
 
 The top `## ` header is always the most recent version (`## vX.Y.Z`, exact), and that header is the source of truth the release workflow reads. Adding a new top block to this file is what cuts a release.
 
+## v0.2.0
+
+### Added
+
+- **Alerts in Nightwatch at 80% and 100% of the monthly limit.** A scheduled command, `nightwatch-cap:report-alerts`, runs every five minutes without sampling and reports `MonthlyEventLimitApproaching` or `MonthlyEventLimitReached` as an unhandled exception coded with the month, so each month opens its own issue. An alert passes the cap uncounted and gets up to three reporting attempts. A run with Nightwatch disabled, or whose counter fails, reports nothing and uses none of them. A failed counter logs `nightwatch.cap_alert_skipped`.
+
 ## v0.1.1
 
 ### Changed

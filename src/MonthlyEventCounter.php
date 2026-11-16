@@ -18,6 +18,8 @@ final readonly class MonthlyEventCounter
 {
     private const int DECAY_SECONDS = 60 * 60 * 24 * 31;
 
+    private const int ALERT_DECAY_SECONDS = 60 * 60 * 24 * 32;
+
     public function __construct(
         private Container $container,
         private Repository $config,
@@ -36,10 +38,35 @@ final readonly class MonthlyEventCounter
     public function add(int $events): int
     {
         return $this->limiter()->increment(
-            key: sprintf('nightwatch-events:%s', Date::now()->format('Y-m')),
+            key: $this->key(Date::now()->format('Y-m')),
             decaySeconds: self::DECAY_SECONDS,
             amount: $events,
         );
+    }
+
+    /**
+     * The count for a month, Y-m.
+     */
+    public function count(string $month): int
+    {
+        return (int) $this->limiter()->attempts($this->key($month));
+    }
+
+    /**
+     * Record one more report of an alert for a month, in the store that holds the
+     * count, and return how many reports it has had.
+     */
+    public function recordAlert(string $month, string $alert): int
+    {
+        return $this->limiter()->increment(
+            key: sprintf('nightwatch-cap-alert:%s:%s', $month, $alert),
+            decaySeconds: self::ALERT_DECAY_SECONDS,
+        );
+    }
+
+    private function key(string $month): string
+    {
+        return sprintf('nightwatch-events:%s', $month);
     }
 
     /**
