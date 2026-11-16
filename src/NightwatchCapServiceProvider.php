@@ -44,7 +44,8 @@ final class NightwatchCapServiceProvider extends ServiceProvider
 
     /**
      * The application's name picks its minute, so the applications that share a
-     * host or a Nightwatch organization do not all run the command at once.
+     * host or a Nightwatch organization do not all run the command at once. The
+     * mask keeps the hash's low 28 bits, which are the same on 32- and 64-bit PHP.
      *
      * @return int<7, 59>
      */
@@ -52,6 +53,6 @@ final class NightwatchCapServiceProvider extends ServiceProvider
     {
         $application = $this->app->make(Repository::class)->get('app.name');
 
-        return self::ALERT_MINUTES[crc32(is_string($application) ? $application : 'Laravel') % count(self::ALERT_MINUTES)];
+        return self::ALERT_MINUTES[(crc32(is_string($application) ? $application : 'Laravel') & 0x0FFFFFFF) % count(self::ALERT_MINUTES)];
     }
 }

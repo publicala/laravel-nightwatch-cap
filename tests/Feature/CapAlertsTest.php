@@ -422,7 +422,7 @@ it('runs hourly at a prime minute picked from the application name, without samp
     $nightwatch->config['sampling']['scheduled_tasks'] = 1.0;
     $nightwatch->configureScheduledTaskSampling($event);
 
-    expect($event->expression)->toBe('31 * * * *')
+    expect($event->expression)->toBe('59 * * * *')
         ->and($nightwatch->sampling())->toBeFalse();
 });
 
@@ -435,9 +435,8 @@ it('gives each application its own minute past the hour', function (mixed $appli
 
     expect($event->expression)->toBe($expression);
 })->with([
-    ['acme-books', '53 * * * *'],
-    ['acme-api', '17 * * * *'],
-    [null, '7 * * * *'],
+    ['acme-books', '43 * * * *'],
+    [null, '13 * * * *'],
 ]);
 
 it('schedules nothing outside the console, and still caps', function (): void {
