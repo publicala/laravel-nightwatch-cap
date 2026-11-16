@@ -48,13 +48,13 @@ function countEvents(int $events, string $month = '2026-11'): void
 }
 
 /**
- * Run the command as the scheduler does, every five minutes.
+ * Run the command as the scheduler does, every hour.
  */
 function runAlerts(int $runs = 1): void
 {
     foreach (range(1, $runs) as $run) {
         test()->artisan(ReportCapAlerts::class)->assertSuccessful();
-        test()->travel(5)->minutes();
+        test()->travel(1)->hours();
     }
 }
 
@@ -414,7 +414,7 @@ it('neither schedules nor reports when Nightwatch left Core unbound, and keeps t
         ->and(alertsSent($this->ingest))->toBeEmpty();
 });
 
-it('runs every five minutes without sampling the run itself', function (): void {
+it('runs hourly at a prime minute picked from the application name, without sampling the run itself', function (): void {
     $event = collect(resolve(Schedule::class)->events())
         ->firstOrFail(fn (ScheduledEvent $event): bool => str_contains((string) $event->command, 'nightwatch-cap:report-alerts'));
 
@@ -422,9 +422,22 @@ it('runs every five minutes without sampling the run itself', function (): void 
     $nightwatch->config['sampling']['scheduled_tasks'] = 1.0;
     $nightwatch->configureScheduledTaskSampling($event);
 
-    expect($event->expression)->toBe('*/5 * * * *')
+    expect($event->expression)->toBe('59 * * * *')
         ->and($nightwatch->sampling())->toBeFalse();
 });
+
+it('gives each application its own minute past the hour', function (mixed $application, string $expression): void {
+    Config::set('app.name', $application);
+    $this->app->forgetInstance(Schedule::class);
+
+    $event = collect(resolve(Schedule::class)->events())
+        ->firstOrFail(fn (ScheduledEvent $event): bool => str_contains((string) $event->command, 'nightwatch-cap:report-alerts'));
+
+    expect($event->expression)->toBe($expression);
+})->with([
+    ['acme-books', '43 * * * *'],
+    [null, '13 * * * *'],
+]);
 
 it('schedules nothing outside the console, and still caps', function (): void {
     $_SERVER['APP_RUNNING_IN_CONSOLE'] = 'false';

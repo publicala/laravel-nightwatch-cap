@@ -4,6 +4,16 @@ All notable changes to `publicala/laravel-nightwatch-cap`.
 
 The top `## ` header is always the most recent version (`## vX.Y.Z`, exact), and that header is the source of truth the release workflow reads. Adding a new top block to this file is what cuts a release.
 
+## v0.4.0
+
+### Changed
+
+- **`nightwatch-cap:report-alerts` runs hourly, at a minute past the hour picked from `app.name`.** The minute is a prime from 7 to 59, clear of `:00` and the five-minute marks, so applications that share a host or a Nightwatch organization spread across the hour. Before, every application ran it every five minutes.
+
+### Upgrade
+
+An alert reaches Nightwatch up to an hour after the count crosses its threshold, and its three reports go out an hour apart. A threshold crossed after a month's last run is not reported.
+
 ## v0.3.0
 
 ### Fixed

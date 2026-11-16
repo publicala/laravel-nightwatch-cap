@@ -46,7 +46,7 @@ Other `IngestingEvents` listeners still run for a batch under the limit. The pac
 
 ## Alerts
 
-Every five minutes the scheduler runs `nightwatch-cap:report-alerts`, which reports the month's count to Nightwatch as an unhandled exception once it reaches a threshold:
+Every hour the scheduler runs `nightwatch-cap:report-alerts`, which reports the month's count to Nightwatch as an unhandled exception once it reaches a threshold:
 
 | Count | Exception |
 | --- | --- |
@@ -61,7 +61,8 @@ The count is what the application tried to send, the batches the cap dropped inc
 
 - **Each month opens its own issue.** The exception code is the month (`202611`), and Nightwatch groups exceptions by class, code, file and line. A new issue reaches the channels the application's Nightwatch notifications go to.
 - **An alert goes out past the limit.** Nightwatch sends an unhandled exception at once, in a batch of its own. The cap lets a batch that holds only one alert through, uncounted, and drops a batch that carries anything else.
-- **An alert gets up to three reports, at least four minutes apart.** Nightwatch confirms nothing about a report, so the first three runs past a threshold each report it, and the repeats land in the same issue. The first report takes a four-minute lock in the counter's store, so several servers running the schedule still report once per run. The limit reached is reported even when the 80% alert was not.
+- **Each application runs at its own minute past the hour.** The minute is a prime from 7 to 59, picked from `app.name`, so it stays clear of `:00` and the five-minute marks, and applications that share a host or a Nightwatch organization spread across the hour.
+- **An alert gets up to three reports, at least four minutes apart.** Nightwatch confirms nothing about a report, so the first three runs past a threshold each report it, an hour apart on schedule, and the repeats land in the same issue. The first report takes a four-minute lock in the counter's store, so several servers running the schedule still report once per run. The limit reached is reported even when the 80% alert was not.
 - **Raising the limit re-arms both alerts.** Reports are counted per month, alert and limit, so the count reaching a raised limit reports again.
 - **A scheduler whose agent is down leaves the report to the others.** Before it takes the lock, the run pings Nightwatch's agent. A run that cannot reach it logs `nightwatch.cap_alert_skipped` with the reason `agent_unreachable` and uses none of the reports.
 - **Each report handed to Nightwatch logs a warning** in the application logs, a trace that does not depend on Nightwatch:
@@ -79,7 +80,7 @@ The count is what the application tried to send, the batches the cap dropped inc
 
 The package never lowers the count. To resume sending before the month rolls over, raise `nightwatch.monthly_event_limit` above the count and restart every process that booted with the old limit (`queue:restart`, `octane:reload`). A lower sample rate only slows the count toward the next limit.
 
-An application that runs no scheduler gets no alerts. A threshold crossed in the last five minutes of a month is not reported, since the next run reads the new month's count.
+An application that runs no scheduler gets no alerts. A threshold crossed after a month's last run is not reported, since the next run reads the new month's count.
 
 ## Configuration
 
