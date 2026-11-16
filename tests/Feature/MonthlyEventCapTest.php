@@ -90,15 +90,15 @@ it('counts each calendar month under its own key', function (): void {
         ->and(RateLimiterFacade::attempts('nightwatch-events:2026-12'))->toBe(10);
 });
 
-it('rolls the month over in the application timezone', function (): void {
+it('rolls the month over in the application timezone, whatever the process timezone', function (): void {
     Config::set('app.timezone', 'America/Argentina/Buenos_Aires');
-    date_default_timezone_set('America/Argentina/Buenos_Aires');
-    $this->travelTo('2026-11-30 22:00:00');
+    $this->travelTo('2026-12-01 01:00:00');
 
     Event::until(requests(1));
 
-    expect(RateLimiterFacade::attempts('nightwatch-events:2026-11'))->toBe(1);
-})->after(fn (): bool => date_default_timezone_set('UTC'));
+    expect(date_default_timezone_get())->toBe('UTC')
+        ->and(RateLimiterFacade::attempts('nightwatch-events:2026-11'))->toBe(1);
+});
 
 it('keeps counting from the value already in the store', function (): void {
     Config::set('nightwatch.monthly_event_limit', 10);
@@ -108,10 +108,10 @@ it('keeps counting from the value already in the store', function (): void {
         ->and(Event::until(requests(1)))->toBeFalse();
 });
 
-it('keeps the count for 31 days', function (): void {
+it('keeps the count for 32 days, past a month with a clock change', function (): void {
     Event::until(requests(3));
 
-    $this->travel(31 * 24 * 60 * 60 - 1)->seconds();
+    $this->travel(32 * 24 * 60 * 60 - 1)->seconds();
     expect(RateLimiterFacade::attempts('nightwatch-events:2026-11'))->toBe(3);
 
     $this->travel(1)->seconds();
@@ -121,7 +121,7 @@ it('keeps the count for 31 days', function (): void {
 it('counts through the application rate limiter when no store is configured', function (): void {
     RateLimiterFacade::shouldReceive('increment')
         ->once()
-        ->with('nightwatch-events:2026-11', 60 * 60 * 24 * 31, 2)
+        ->with('nightwatch-events:2026-11', 60 * 60 * 24 * 32, 2)
         ->andReturn(2);
 
     expect(Event::until(requests(2)))->toBeNull();
@@ -170,6 +170,41 @@ it('lets the batch through uncounted when the configured store is not defined', 
         ]);
 
     expect(Event::until(requests(1)))->toBeNull();
+});
+
+it('reads a limit written as a numeric string', function (): void {
+    Config::set('nightwatch.monthly_event_limit', '10');
+
+    expect(Event::until(requests(10)))->toBeNull()
+        ->and(Event::until(requests(1)))->toBeFalse();
+});
+
+it('counts the batch and lets it through when the limit is not a whole number', function (mixed $limit): void {
+    Config::set('nightwatch.monthly_event_limit', $limit);
+
+    Log::shouldReceive('warning')
+        ->once()
+        ->with('nightwatch.ingest_uncapped', [
+            'reason' => 'invalid_limit',
+            'exception' => 'nightwatch.monthly_event_limit must be a whole number.',
+        ]);
+
+    expect(Event::until(requests(1)))->toBeNull()
+        ->and(RateLimiterFacade::attempts('nightwatch-events:2026-11'))->toBe(1);
+})->with([null, 'lots', 1.5, -5, '-5', ' 100', '1e6', '']);
+
+it('lets the batch through even when the logger fails', function (): void {
+    RateLimiterFacade::shouldReceive('increment')->andThrow(new RuntimeException('Connection refused'));
+    Log::shouldReceive('warning')->andThrow(new RuntimeException('Disk full'));
+
+    expect(Event::until(requests(1)))->toBeNull();
+});
+
+it('drops the batch that crosses the limit even when the logger fails', function (): void {
+    Config::set('nightwatch.monthly_event_limit', 1);
+    Log::shouldReceive('warning')->andThrow(new RuntimeException('Disk full'));
+
+    expect(Event::until(requests(2)))->toBeFalse();
 });
 
 it('lets the listeners registered after it run under the limit', function (): void {

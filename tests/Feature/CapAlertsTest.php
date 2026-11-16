@@ -7,6 +7,7 @@ use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Contracts\Debug\ExceptionHandler;
 use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Foundation\Exceptions\Handler;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Context;
 use Illuminate\Support\Facades\Event;
@@ -43,7 +44,18 @@ function alertsSent(RecordingIngest $ingest): array
 
 function countEvents(int $events, string $month = '2026-11'): void
 {
-    RateLimiter::increment("nightwatch-events:{$month}", amount: $events);
+    RateLimiter::increment("nightwatch-events:{$month}", 60 * 60 * 24 * 32, $events);
+}
+
+/**
+ * Run the command as the scheduler does, every five minutes.
+ */
+function runAlerts(int $runs = 1): void
+{
+    foreach (range(1, $runs) as $run) {
+        test()->artisan(ReportCapAlerts::class)->assertSuccessful();
+        test()->travel(5)->minutes();
+    }
 }
 
 it('reports nothing under 80% of the limit', function (): void {
@@ -64,7 +76,7 @@ it('reports an unhandled alert at 80% of the limit', function (): void {
             'class' => MonthlyEventLimitApproaching::class,
             'code' => '202611',
             'handled' => false,
-            'message' => 'acme-app has sent 80 of its 100 Nightwatch events for 2026-11. Past the limit, it sends nothing more until the month rolls over.',
+            'message' => 'acme-app has counted 80 of its 100 Nightwatch events for 2026-11. Past the limit, it sends nothing more until the month rolls over.',
         ]);
 });
 
@@ -104,7 +116,7 @@ it('names the application Laravel when app.name is not a string', function (): v
 
     $this->artisan(ReportCapAlerts::class);
 
-    expect(alertsSent($this->ingest)[0]['message'])->toStartWith('Laravel has sent 80 ');
+    expect(alertsSent($this->ingest)[0]['message'])->toStartWith('Laravel has counted 80 ');
 });
 
 it('skips the run when the counter fails', function (string $failing): void {
@@ -182,16 +194,14 @@ it('reports the limit reached in place of the 80% alert', function (): void {
             'class' => MonthlyEventLimitReached::class,
             'code' => '202611',
             'handled' => false,
-            'message' => 'acme-app has sent 130 Nightwatch events for 2026-11, past its limit of 100, and sends nothing more until the month rolls over. Raise nightwatch.monthly_event_limit above the count to resume before then.',
+            'message' => "acme-app has counted 130 Nightwatch events for 2026-11, reaching its limit of 100, and sends nothing more until the month rolls over. To resume before then, raise nightwatch.monthly_event_limit above the count and restart the application's workers.",
         ]);
 });
 
 it('reports each alert on three runs, then stops', function (): void {
     countEvents(100);
 
-    foreach (range(1, 5) as $run) {
-        $this->artisan(ReportCapAlerts::class)->assertSuccessful();
-    }
+    runAlerts(5);
 
     expect(alertsSent($this->ingest))->toHaveCount(ReportCapAlerts::REPORTS_PER_ALERT)
         ->and(array_unique(array_column(alertsSent($this->ingest), '_group')))->toHaveCount(1);
@@ -199,13 +209,10 @@ it('reports each alert on three runs, then stops', function (): void {
 
 it('reports the limit reached even after the 80% alert ran out of reports', function (): void {
     countEvents(80);
-
-    foreach (range(1, 4) as $run) {
-        $this->artisan(ReportCapAlerts::class);
-    }
+    runAlerts(4);
 
     countEvents(20);
-    $this->artisan(ReportCapAlerts::class);
+    runAlerts();
 
     expect(array_column(alertsSent($this->ingest), 'class'))->toBe([
         MonthlyEventLimitApproaching::class,
@@ -229,6 +236,7 @@ it('codes each month apart, so each month opens its own issue', function (): voi
 
 it('discards the rest of the run after reporting', function (): void {
     countEvents(100);
+    resolve(Core::class)->dontSample();
 
     $this->artisan(ReportCapAlerts::class);
     resolve(Core::class)->finishExecution();
@@ -236,6 +244,174 @@ it('discards the rest of the run after reporting', function (): void {
     expect(resolve(Core::class)->sampling())->toBeFalse()
         ->and($this->ingest->buffered)->toBeEmpty()
         ->and(alertsSent($this->ingest))->toHaveCount(1);
+});
+
+it('reports once each four minutes, however many schedulers run it', function (): void {
+    $this->travelTo('2026-11-15 12:04:59');
+    countEvents(100);
+
+    $this->artisan(ReportCapAlerts::class);
+    $this->artisan(ReportCapAlerts::class);
+    $this->travel(1)->seconds();
+    $this->artisan(ReportCapAlerts::class);
+    $this->travel(3)->minutes();
+    $this->artisan(ReportCapAlerts::class);
+
+    expect(alertsSent($this->ingest))->toHaveCount(1);
+
+    $this->travel(1)->minutes();
+    $this->artisan(ReportCapAlerts::class);
+
+    expect(alertsSent($this->ingest))->toHaveCount(2);
+});
+
+it('reports again once the count reaches a raised limit', function (): void {
+    countEvents(100);
+    runAlerts(4);
+
+    Config::set('nightwatch.monthly_event_limit', 200);
+    countEvents(100);
+    runAlerts();
+
+    expect(alertsSent($this->ingest))->toHaveCount(ReportCapAlerts::REPORTS_PER_ALERT + 1)
+        ->and(alertsSent($this->ingest)[ReportCapAlerts::REPORTS_PER_ALERT]['message'])->toContain('reaching its limit of 200');
+});
+
+it('keeps an alert silent for the rest of the month once its reports ran out', function (): void {
+    $this->travelTo('2026-11-01 00:00:00');
+    countEvents(100);
+    runAlerts(3);
+
+    $this->travelTo('2026-11-30 23:55:00');
+    runAlerts();
+
+    expect(alertsSent($this->ingest))->toHaveCount(ReportCapAlerts::REPORTS_PER_ALERT);
+});
+
+it('reports again the next month after this month ran out of reports', function (): void {
+    countEvents(100);
+    runAlerts(3);
+
+    $this->travelTo('2026-12-02 00:00:00');
+    countEvents(100, '2026-12');
+    runAlerts();
+
+    expect(array_column(alertsSent($this->ingest), 'code'))->toBe(['202611', '202611', '202611', '202612']);
+});
+
+it('reads the count and keeps its reports in the configured store', function (): void {
+    Config::set('cache.stores.counter', ['driver' => 'array']);
+    Config::set('nightwatch.event_limit_cache_store', 'counter');
+    $counter = new Illuminate\Cache\RateLimiter(Cache::store('counter'));
+    $counter->increment('nightwatch-events:2026-11', 60 * 60 * 24 * 32, 100);
+
+    $reports = 'nightwatch-cap-alert:2026-11:MonthlyEventLimitReached:100';
+
+    runAlerts(4);
+
+    expect(alertsSent($this->ingest))->toHaveCount(ReportCapAlerts::REPORTS_PER_ALERT)
+        ->and(RateLimiter::attempts('nightwatch-events:2026-11'))->toBe(0)
+        ->and($counter->attempts($reports))->toBe(4)
+        ->and(RateLimiter::attempts($reports))->toBe(0)
+        ->and(RateLimiter::attempts("{$reports}:lock"))->toBe(0);
+});
+
+it('leaves the report to a scheduler whose agent is reachable', function (): void {
+    countEvents(100);
+    $this->ingest->pingFailure = new RuntimeException('Connection refused');
+
+    Log::shouldReceive('warning')
+        ->once()
+        ->with('nightwatch.cap_alert_skipped', [
+            'reason' => 'agent_unreachable',
+            'exception' => 'Connection refused',
+        ]);
+
+    $this->artisan(ReportCapAlerts::class)->assertSuccessful();
+    $this->ingest->pingFailure = null;
+    $this->artisan(ReportCapAlerts::class)->assertSuccessful();
+
+    expect(alertsSent($this->ingest))->toHaveCount(1);
+});
+
+it('reports even when the logger fails', function (): void {
+    countEvents(100);
+    Log::shouldReceive('warning')->andThrow(new RuntimeException('Disk full'));
+
+    $this->artisan(ReportCapAlerts::class)->assertSuccessful();
+
+    expect(alertsSent($this->ingest))->toHaveCount(1);
+});
+
+it('logs each report locally', function (): void {
+    Log::spy();
+    countEvents(100);
+
+    runAlerts(2);
+
+    Log::shouldHaveReceived('warning')
+        ->with('nightwatch.cap_alert_reported', Mockery::on(fn (array $context): bool => $context['alert'] === MonthlyEventLimitReached::class && $context['report'] === 2))
+        ->once();
+});
+
+it('skips the run when the limit is not a whole number', function (): void {
+    Config::set('nightwatch.monthly_event_limit', 'lots');
+    countEvents(100);
+
+    Log::shouldReceive('warning')
+        ->once()
+        ->with('nightwatch.cap_alert_skipped', [
+            'reason' => 'invalid_limit',
+            'exception' => 'nightwatch.monthly_event_limit must be a whole number.',
+        ]);
+
+    $this->artisan(ReportCapAlerts::class)->assertSuccessful();
+
+    expect(alertsSent($this->ingest))->toBeEmpty();
+});
+
+it('records nothing of its own and hands back the sampling it found when called from a sampled request or job', function (): void {
+    countEvents(100);
+    resolve(Core::class)->sample();
+    $this->ingest->flush();
+
+    $this->artisan(ReportCapAlerts::class);
+
+    expect(resolve(Core::class)->sampling())->toBeTrue()
+        ->and(resolve(Core::class)->paused())->toBeFalse()
+        ->and($this->ingest->digestsWhenBufferIsFull)->toBeTrue()
+        ->and(Context::getHidden('nightwatch_should_sample'))->toBeTrue()
+        ->and($this->ingest->buffered)->toBeEmpty()
+        ->and(alertsSent($this->ingest))->toHaveCount(1);
+});
+
+it('keeps the sampling Nightwatch::ignore() passes to queued jobs when called inside it', function (): void {
+    countEvents(100);
+    $nightwatch = resolve(Core::class);
+    $nightwatch->sample();
+
+    $seen = $nightwatch->ignore(function () use ($nightwatch): array {
+        $this->artisan(ReportCapAlerts::class);
+
+        return [$nightwatch->sampling(), $nightwatch->paused(), Context::getHidden('nightwatch_should_sample')];
+    });
+
+    expect($seen)->toBe([true, true, false])
+        ->and(alertsSent($this->ingest))->toHaveCount(1);
+});
+
+it('neither schedules nor reports when Nightwatch left Core unbound, and keeps the other scheduled tasks', function (): void {
+    countEvents(100);
+    $this->app->offsetUnset(Core::class);
+    $this->app->forgetInstance(Schedule::class);
+    $this->app->resolving(Schedule::class, fn (Schedule $schedule) => $schedule->command('inspire')->hourly());
+
+    $this->artisan(ReportCapAlerts::class)->assertSuccessful();
+
+    expect(array_map(fn (ScheduledEvent $event): string => (string) $event->command, resolve(Schedule::class)->events()))
+        ->toHaveCount(1)
+        ->sequence(fn ($command) => $command->toContain('inspire'))
+        ->and(alertsSent($this->ingest))->toBeEmpty();
 });
 
 it('runs every five minutes without sampling the run itself', function (): void {

@@ -20,32 +20,60 @@ final class ReportCapAlerts extends Command
 {
     /**
      * Nightwatch confirms nothing about a report, so each alert goes out on this
-     * many runs. The repeats land in the same issue.
+     * many runs, at least four minutes apart. The repeats land in the same issue.
      */
     public const int REPORTS_PER_ALERT = 3;
 
     protected $signature = 'nightwatch-cap:report-alerts';
 
-    protected $description = 'Report to Nightwatch an application that has sent 80% or all of its monthly events';
+    protected $description = 'Report to Nightwatch an application that has counted 80% or all of its monthly events';
 
     public function handle(MonthlyEventCounter $counter, Repository $config): void
     {
+        if (! $this->laravel->bound(Core::class)) {
+            return;
+        }
+
         /** @var Core<RequestState|CommandState> $nightwatch */
         $nightwatch = $this->laravel->make(Core::class);
+        $sampling = $nightwatch->sampling();
 
-        $nightwatch->dontSample();
+        // The scheduler runs the command in a process of its own, unsampled. Called
+        // from a request or job instead, it records nothing of its own and hands
+        // back the sampling it found. ignore() restores the sampling it passes to
+        // queued jobs.
+        $nightwatch->ignore(function () use ($counter, $nightwatch, $config, $sampling): void {
+            try {
+                $this->reportDueAlert($counter, $nightwatch, $config);
+            } finally {
+                $sampling ? $nightwatch->sample() : $nightwatch->dontSample();
+            }
+        });
+    }
 
+    /**
+     * @param  Core<RequestState|CommandState>  $nightwatch
+     */
+    private function reportDueAlert(MonthlyEventCounter $counter, Core $nightwatch, Repository $config): void
+    {
         if (! $nightwatch->enabled()) {
             return;
         }
 
         try {
-            $alert = $this->dueAlert($counter, $config);
+            $limit = $counter->limit();
         } catch (Throwable $throwable) {
-            Log::warning('nightwatch.cap_alert_skipped', [
-                'reason' => 'counter_unavailable',
-                'exception' => $throwable->getMessage(),
-            ]);
+            $this->skip('invalid_limit', $throwable);
+
+            return;
+        }
+
+        $month = $counter->month();
+
+        try {
+            $alert = $this->dueAlert($counter, $config, $month, $limit);
+        } catch (Throwable $throwable) {
+            $this->skip('counter_unavailable', $throwable);
 
             return;
         }
@@ -54,38 +82,75 @@ final class ReportCapAlerts extends Command
             return;
         }
 
-        $nightwatch->sample();
-        $nightwatch->ingest->shouldDigestWhenBufferIsFull(false);
+        // A scheduler whose agent is down must not take a report from one whose
+        // agent can send it.
+        try {
+            $nightwatch->ingest->ping();
+        } catch (Throwable $throwable) {
+            $this->skip('agent_unreachable', $throwable);
+
+            return;
+        }
 
         try {
-            $nightwatch->ignore(fn () => $nightwatch->report($alert, handled: false));
-        } finally {
-            $nightwatch->dontSample();
+            $report = $counter->recordAlert($month, class_basename($alert), $limit);
+        } catch (Throwable $throwable) {
+            $this->skip('counter_unavailable', $throwable);
+
+            return;
         }
+
+        if ($report === null || $report > self::REPORTS_PER_ALERT) {
+            return;
+        }
+
+        $nightwatch->sample();
+        $nightwatch->ingest->shouldDigestWhenBufferIsFull(false);
+        $nightwatch->ignore(fn () => $nightwatch->report($alert, handled: false));
+
+        $this->logWarning('nightwatch.cap_alert_reported', [
+            'alert' => $alert::class,
+            'report' => $report,
+            'message' => $alert->getMessage(),
+        ]);
     }
 
     /**
-     * The alert for the month's count, unless it already went out on every run it
-     * gets. Each call counts as one of those runs.
+     * The alert the month's count has reached, if any.
      */
-    private function dueAlert(MonthlyEventCounter $counter, Repository $config): ?RuntimeException
+    private function dueAlert(MonthlyEventCounter $counter, Repository $config, string $month, int $limit): ?RuntimeException
     {
-        $month = $counter->month();
-        $limit = $counter->limit();
         $events = $counter->count($month);
         $application = $config->get('app.name');
         $application = is_string($application) ? $application : 'Laravel';
 
-        $alert = match (true) {
+        return match (true) {
             $events >= $limit => new MonthlyEventLimitReached($application, $month, $events, $limit),
             $events >= $limit - intdiv($limit, 5) => new MonthlyEventLimitApproaching($application, $month, $events, $limit),
             default => null,
         };
+    }
 
-        if ($alert === null || $counter->recordAlert($month, class_basename($alert)) > self::REPORTS_PER_ALERT) {
-            return null;
+    private function skip(string $reason, Throwable $throwable): void
+    {
+        $this->logWarning('nightwatch.cap_alert_skipped', [
+            'reason' => $reason,
+            'exception' => $throwable->getMessage(),
+        ]);
+    }
+
+    /**
+     * A logger that throws would fail the scheduled run, or the request or job
+     * that called the command, so the warning is best effort.
+     *
+     * @param  array<string, mixed>  $context
+     */
+    private function logWarning(string $message, array $context): void
+    {
+        try {
+            Log::warning($message, $context);
+        } catch (Throwable) {
+            //
         }
-
-        return $alert;
     }
 }

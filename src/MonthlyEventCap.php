@@ -30,20 +30,20 @@ final readonly class MonthlyEventCap
             return null;
         }
 
-        $limit = $this->counter->limit();
-
         // Nightwatch drops the batch, and reports nothing, when this listener
-        // throws. A counter that fails lets the batch through uncounted instead.
+        // throws. A counter that fails lets the batch through uncounted, and an
+        // invalid limit lets it through counted.
         try {
             $count = $event->eventCount();
             $ingested = $this->counter->add($count);
         } catch (Throwable $throwable) {
-            Log::warning('nightwatch.ingest_uncounted', [
-                'reason' => 'counter_unavailable',
-                'exception' => $throwable->getMessage(),
-            ]);
+            return $this->letThrough('nightwatch.ingest_uncounted', 'counter_unavailable', $throwable);
+        }
 
-            return null;
+        try {
+            $limit = $this->counter->limit();
+        } catch (Throwable $throwable) {
+            return $this->letThrough('nightwatch.ingest_uncapped', 'invalid_limit', $throwable);
         }
 
         if ($ingested <= $limit) {
@@ -51,13 +51,38 @@ final readonly class MonthlyEventCap
         }
 
         if ($ingested - $count <= $limit) {
-            Log::warning('nightwatch.ingest_capped', [
+            $this->warn('nightwatch.ingest_capped', [
                 'reason' => 'monthly_event_limit_reached',
                 'limit' => $limit,
             ]);
         }
 
         return false;
+    }
+
+    private function letThrough(string $message, string $reason, Throwable $throwable): null
+    {
+        $this->warn($message, [
+            'reason' => $reason,
+            'exception' => $throwable->getMessage(),
+        ]);
+
+        return null;
+    }
+
+    /**
+     * A logger that throws would escape the listener, and Nightwatch would drop the
+     * batch, so the warning is best effort.
+     *
+     * @param  array<string, mixed>  $context
+     */
+    private function warn(string $message, array $context): void
+    {
+        try {
+            Log::warning($message, $context);
+        } catch (Throwable) {
+            //
+        }
     }
 
     /**

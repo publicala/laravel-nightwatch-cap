@@ -17,7 +17,7 @@ updates:
 
   # Composer dev dependencies (Pint, Rector, PHPStan, Pest, Larastan, Testbench).
   # Runtime requirements (illuminate/*) intentionally stay manual: the package
-  # supports Laravel ^11.48|^12.64|^13.23 and we want the human call when a major lands.
+  # supports Laravel ^12.61|^13.0 and we want the human call when a major lands.
   - package-ecosystem: composer
     directory: /
     schedule:

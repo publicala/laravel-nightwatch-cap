@@ -15,7 +15,7 @@ final class MonthlyEventLimitReached extends RuntimeException
     public function __construct(string $application, string $month, int $events, int $limit)
     {
         parent::__construct(sprintf(
-            '%s has sent %s Nightwatch events for %s, past its limit of %s, and sends nothing more until the month rolls over. Raise nightwatch.monthly_event_limit above the count to resume before then.',
+            "%s has counted %s Nightwatch events for %s, reaching its limit of %s, and sends nothing more until the month rolls over. To resume before then, raise nightwatch.monthly_event_limit above the count and restart the application's workers.",
             $application,
             number_format($events),
             $month,
