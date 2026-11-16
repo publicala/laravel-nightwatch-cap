@@ -9,6 +9,7 @@ use Illuminate\Config\Repository;
 use Illuminate\Contracts\Container\Container;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Date;
+use InvalidArgumentException;
 
 /**
  * The count of the events an application sent to Nightwatch in a calendar month,
@@ -16,9 +17,14 @@ use Illuminate\Support\Facades\Date;
  */
 final readonly class MonthlyEventCounter
 {
-    private const int DECAY_SECONDS = 60 * 60 * 24 * 31;
+    /**
+     * A calendar month that holds a clock change runs an hour past 31 days.
+     */
+    private const int DECAY_SECONDS = 60 * 60 * 24 * 32;
 
     private const int ALERT_DECAY_SECONDS = 60 * 60 * 24 * 32;
+
+    private const int ALERT_SLOT_SECONDS = 60 * 5;
 
     public function __construct(
         private Container $container,
@@ -27,17 +33,29 @@ final readonly class MonthlyEventCounter
         //
     }
 
+    /**
+     * @throws InvalidArgumentException when nightwatch.monthly_event_limit holds
+     *                                  anything but a whole number
+     */
     public function limit(): int
     {
-        return $this->config->integer('nightwatch.monthly_event_limit', MonthlyEventCap::DEFAULT_LIMIT);
+        $limit = $this->config->get('nightwatch.monthly_event_limit', MonthlyEventCap::DEFAULT_LIMIT);
+
+        return match (true) {
+            is_int($limit) => $limit,
+            is_string($limit) && ctype_digit($limit) => (int) $limit,
+            default => throw new InvalidArgumentException('nightwatch.monthly_event_limit must be a whole number.'),
+        };
     }
 
     /**
-     * The current month, Y-m, which names the count.
+     * The current month in the application's timezone, Y-m, which names the count.
      */
     public function month(): string
     {
-        return Date::now()->format('Y-m');
+        $timezone = $this->config->get('app.timezone');
+
+        return Date::now(is_string($timezone) ? $timezone : 'UTC')->format('Y-m');
     }
 
     /**
@@ -61,15 +79,21 @@ final readonly class MonthlyEventCounter
     }
 
     /**
-     * Record one more report of an alert for a month, in the store that holds the
-     * count, and return how many reports it has had.
+     * Record one more report of an alert at a limit, in the store that holds the
+     * count, and return how many reports it has had. Every process that shares the
+     * store gets one report per alert each five minutes, so null means another one
+     * already took the current five minutes.
      */
-    public function recordAlert(string $month, string $alert): int
+    public function recordAlert(string $month, string $alert, int $limit): ?int
     {
-        return $this->limiter()->increment(
-            key: sprintf('nightwatch-cap-alert:%s:%s', $month, $alert),
-            decaySeconds: self::ALERT_DECAY_SECONDS,
-        );
+        $key = sprintf('nightwatch-cap-alert:%s:%s:%d', $month, $alert, $limit);
+        $slot = intdiv(Date::now()->getTimestamp(), self::ALERT_SLOT_SECONDS);
+
+        if ($this->limiter()->increment(sprintf('%s:%d', $key, $slot), self::ALERT_SLOT_SECONDS) !== 1) {
+            return null;
+        }
+
+        return $this->limiter()->increment($key, self::ALERT_DECAY_SECONDS);
     }
 
     private function key(string $month): string
