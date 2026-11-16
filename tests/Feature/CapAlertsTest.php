@@ -5,6 +5,7 @@ declare(strict_types=1);
 use Illuminate\Console\Scheduling\Event as ScheduledEvent;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Contracts\Debug\ExceptionHandler;
+use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Foundation\Exceptions\Handler;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Context;
@@ -247,6 +248,17 @@ it('runs every five minutes without sampling the run itself', function (): void 
 
     expect($event->expression)->toBe('*/5 * * * *')
         ->and($nightwatch->sampling())->toBeFalse();
+});
+
+it('schedules nothing outside the console, and still caps', function (): void {
+    $_SERVER['APP_RUNNING_IN_CONSOLE'] = 'false';
+    $this->refreshApplication();
+
+    expect($this->app->runningInConsole())->toBeFalse()
+        ->and(resolve(Schedule::class)->events())->toBeEmpty()
+        ->and(resolve(Dispatcher::class)->getListeners(IngestingEvents::class))->toHaveCount(1);
+})->after(function (): void {
+    unset($_SERVER['APP_RUNNING_IN_CONSOLE']);
 });
 
 it('lets an alert through past the limit, uncounted', function (): void {
