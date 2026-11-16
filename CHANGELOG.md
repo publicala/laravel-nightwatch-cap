@@ -23,6 +23,12 @@ The top `## ` header is always the most recent version (`## vX.Y.Z`, exact), and
 
 Every application that runs the scheduler gets the `nightwatch-cap:report-alerts` entry, which needs Nightwatch enabled and its agent reachable from the scheduler's server, and the same counter store as the web and queue processes. Alert reports already recorded under v0.2.0 do not carry over, so an alert reported this month under v0.2.0 can be reported again.
 
+## v0.2.1
+
+### Changed
+
+- **`MonthlyEventCounter::month()` names the current month for both the cap and the alert command, and the command resolves Nightwatch's `Core` when it runs.** Behavior is unchanged.
+
 ## v0.2.0
 
 ### Added
