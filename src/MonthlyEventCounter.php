@@ -33,12 +33,20 @@ final readonly class MonthlyEventCounter
     }
 
     /**
+     * The current month, Y-m, which names the count.
+     */
+    public function month(): string
+    {
+        return Date::now()->format('Y-m');
+    }
+
+    /**
      * Add events to the current month's count and return the new count.
      */
     public function add(int $events): int
     {
         return $this->limiter()->increment(
-            key: $this->key(Date::now()->format('Y-m')),
+            key: $this->key($this->month()),
             decaySeconds: self::DECAY_SECONDS,
             amount: $events,
         );
