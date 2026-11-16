@@ -246,12 +246,15 @@ it('discards the rest of the run after reporting', function (): void {
         ->and(alertsSent($this->ingest))->toHaveCount(1);
 });
 
-it('reports once each five minutes, however many schedulers run it', function (): void {
+it('reports once each four minutes, however many schedulers run it', function (): void {
+    $this->travelTo('2026-11-15 12:04:59');
     countEvents(100);
 
     $this->artisan(ReportCapAlerts::class);
     $this->artisan(ReportCapAlerts::class);
-    $this->travel(4)->minutes();
+    $this->travel(1)->seconds();
+    $this->artisan(ReportCapAlerts::class);
+    $this->travel(3)->minutes();
     $this->artisan(ReportCapAlerts::class);
 
     expect(alertsSent($this->ingest))->toHaveCount(1);
@@ -341,6 +344,7 @@ it('hands back the sampling it found when called from a sampled request or job',
     $this->artisan(ReportCapAlerts::class);
 
     expect(resolve(Core::class)->sampling())->toBeTrue()
+        ->and($this->ingest->digestsWhenBufferIsFull)->toBeTrue()
         ->and(alertsSent($this->ingest))->toHaveCount(1);
 });
 

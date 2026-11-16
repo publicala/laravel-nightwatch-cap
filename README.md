@@ -55,7 +55,7 @@ The count is what the application tried to send, the batches the cap dropped inc
 
 - **Each month opens its own issue.** The exception code is the month (`202611`), and Nightwatch groups exceptions by class, code, file and line. A new issue reaches the channels the application's Nightwatch notifications go to.
 - **An alert goes out past the limit.** Nightwatch sends an unhandled exception at once, in a batch of its own. The cap lets a batch that holds only one alert through, uncounted, and drops a batch that carries anything else.
-- **An alert gets up to three reports, five minutes apart.** Nightwatch confirms nothing about a report, so the first three runs past a threshold each report it, and the repeats land in the same issue. Every scheduler that shares the counter's store shares the five minutes, so several servers running the schedule still report once each five minutes. The limit reached is reported even when the 80% alert was not.
+- **An alert gets up to three reports, at least four minutes apart.** Nightwatch confirms nothing about a report, so the first three runs past a threshold each report it, and the repeats land in the same issue. The first report takes a four-minute lock in the counter's store, so several servers running the schedule still report once per run. The limit reached is reported even when the 80% alert was not.
 - **Raising the limit re-arms both alerts.** Reports are counted per month, alert and limit, so the count reaching a raised limit reports again.
 - **Each report logs a warning** in the application logs, a trace that does not depend on Nightwatch:
 

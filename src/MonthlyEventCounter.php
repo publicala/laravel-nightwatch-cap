@@ -24,7 +24,11 @@ final readonly class MonthlyEventCounter
 
     private const int ALERT_DECAY_SECONDS = 60 * 60 * 24 * 32;
 
-    private const int ALERT_SLOT_SECONDS = 60 * 5;
+    /**
+     * Shorter than the five minutes between scheduled runs, so the next run finds
+     * the lock gone despite a few seconds of scheduler jitter.
+     */
+    private const int ALERT_LOCK_SECONDS = 60 * 4;
 
     public function __construct(
         private Container $container,
@@ -80,16 +84,15 @@ final readonly class MonthlyEventCounter
 
     /**
      * Record one more report of an alert at a limit, in the store that holds the
-     * count, and return how many reports it has had. Every process that shares the
-     * store gets one report per alert each five minutes, so null means another one
-     * already took the current five minutes.
+     * count, and return how many reports it has had. The first process to record
+     * a report holds a lock for four minutes, so every other process that shares
+     * the store gets null until it expires.
      */
     public function recordAlert(string $month, string $alert, int $limit): ?int
     {
         $key = sprintf('nightwatch-cap-alert:%s:%s:%d', $month, $alert, $limit);
-        $slot = intdiv(Date::now()->getTimestamp(), self::ALERT_SLOT_SECONDS);
 
-        if ($this->limiter()->increment(sprintf('%s:%d', $key, $slot), self::ALERT_SLOT_SECONDS) !== 1) {
+        if ($this->limiter()->increment($key.':lock', self::ALERT_LOCK_SECONDS) !== 1) {
             return null;
         }
 

@@ -10,7 +10,7 @@ The top `## ` header is always the most recent version (`## vX.Y.Z`, exact), and
 
 - **An application whose Nightwatch provider fails to register keeps its scheduler.** The alert entry is scheduled, and the command runs, only when Nightwatch bound its `Core`. Before, `Sample::never()` threw while the schedule was built, and no scheduled task ran.
 - **Raising the limit re-arms the alerts.** Reports are counted per month, alert and limit.
-- **An alert gets one report each five minutes across every scheduler that shares the counter's store.** Before, several servers could spend all three reports in the same minute. Each report logs `nightwatch.cap_alert_reported`.
+- **An alert gets at most one report each four minutes across every scheduler that shares the counter's store.** Before, several servers could spend all three reports in the same minute. Each report logs `nightwatch.cap_alert_reported`.
 - **A limit that is not a whole number lets batches through uncounted**, logging `nightwatch.ingest_uncounted` with the reason `invalid_limit`, and the alert command logs `nightwatch.cap_alert_skipped` with the same reason. A numeric string is read as its number. A logger that throws no longer stops a batch.
 - **The month follows `app.timezone`**, whatever timezone the process runs in, **and the count lasts 32 days**, past a month that holds a clock change. A count already in the store keeps the TTL it was created with.
 - **Called from a request or job, the alert command hands back the sampling it found.**
@@ -22,12 +22,6 @@ The top `## ` header is always the most recent version (`## vX.Y.Z`, exact), and
 ### Upgrade
 
 Every application that runs the scheduler gets the `nightwatch-cap:report-alerts` entry, which needs Nightwatch enabled and its agent reachable from the scheduler's server, and the same counter store as the web and queue processes. Alert reports already recorded under v0.2.0 do not carry over, so an alert reported this month under v0.2.0 can be reported again.
-
-## v0.2.1
-
-### Changed
-
-- **`MonthlyEventCounter::month()` names the current month for both the cap and the alert command, and the command resolves Nightwatch's `Core` when it runs.** Behavior is unchanged.
 
 ## v0.2.0
 

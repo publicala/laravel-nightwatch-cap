@@ -20,7 +20,7 @@ final class ReportCapAlerts extends Command
 {
     /**
      * Nightwatch confirms nothing about a report, so each alert goes out on this
-     * many runs, five minutes apart. The repeats land in the same issue.
+     * many runs, at least four minutes apart. The repeats land in the same issue.
      */
     public const int REPORTS_PER_ALERT = 3;
 
@@ -91,9 +91,9 @@ final class ReportCapAlerts extends Command
     }
 
     /**
-     * The alert for the month's count and the number of its report, unless this
-     * five minutes' report already went out from another process, or the alert
-     * went out on every report it gets.
+     * The alert for the month's count and the number of its report, unless another
+     * process reported it in the last four minutes, or it went out on every report
+     * it gets.
      *
      * @return array{RuntimeException, int}|null
      */
