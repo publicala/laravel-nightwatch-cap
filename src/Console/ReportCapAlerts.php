@@ -6,7 +6,6 @@ namespace Publicala\NightwatchCap\Console;
 
 use Illuminate\Config\Repository;
 use Illuminate\Console\Command;
-use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\Log;
 use Laravel\Nightwatch\Core;
 use Laravel\Nightwatch\State\CommandState;
@@ -29,11 +28,11 @@ final class ReportCapAlerts extends Command
 
     protected $description = 'Report to Nightwatch an application that has sent 80% or all of its monthly events';
 
-    /**
-     * @param  Core<RequestState|CommandState>  $nightwatch
-     */
-    public function handle(MonthlyEventCounter $counter, Core $nightwatch, Repository $config): void
+    public function handle(MonthlyEventCounter $counter, Repository $config): void
     {
+        /** @var Core<RequestState|CommandState> $nightwatch */
+        $nightwatch = $this->laravel->make(Core::class);
+
         $nightwatch->dontSample();
 
         if (! $nightwatch->enabled()) {
@@ -71,7 +70,7 @@ final class ReportCapAlerts extends Command
      */
     private function dueAlert(MonthlyEventCounter $counter, Repository $config): ?RuntimeException
     {
-        $month = Date::now()->format('Y-m');
+        $month = $counter->month();
         $limit = $counter->limit();
         $events = $counter->count($month);
         $application = $config->get('app.name');

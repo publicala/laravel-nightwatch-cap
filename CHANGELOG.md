@@ -4,6 +4,12 @@ All notable changes to `publicala/laravel-nightwatch-cap`.
 
 The top `## ` header is always the most recent version (`## vX.Y.Z`, exact), and that header is the source of truth the release workflow reads. Adding a new top block to this file is what cuts a release.
 
+## v0.2.1
+
+### Changed
+
+- **`MonthlyEventCounter::month()` names the current month for both the cap and the alert command, and the command resolves Nightwatch's `Core` when it runs.** Behavior is unchanged.
+
 ## v0.2.0
 
 ### Added
