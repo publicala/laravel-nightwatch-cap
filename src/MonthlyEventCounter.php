@@ -51,7 +51,7 @@ final readonly class MonthlyEventCounter
      */
     public function count(string $month): int
     {
-        return $this->limiter()->attempts($this->key($month));
+        return (int) $this->limiter()->attempts($this->key($month));
     }
 
     /**

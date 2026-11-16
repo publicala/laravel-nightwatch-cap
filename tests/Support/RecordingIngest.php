@@ -21,6 +21,8 @@ final class RecordingIngest implements Ingest
      */
     public array $buffered = [];
 
+    public bool $digestsWhenBufferIsFull = true;
+
     public function write(array $record): void
     {
         $this->buffered[] = $record;
@@ -43,7 +45,7 @@ final class RecordingIngest implements Ingest
 
     public function shouldDigestWhenBufferIsFull(bool $bool = true): void
     {
-        //
+        $this->digestsWhenBufferIsFull = $bool;
     }
 
     public function digest(): void

@@ -4,8 +4,12 @@ declare(strict_types=1);
 
 use Illuminate\Console\Scheduling\Event as ScheduledEvent;
 use Illuminate\Console\Scheduling\Schedule;
+use Illuminate\Contracts\Debug\ExceptionHandler;
+use Illuminate\Foundation\Exceptions\Handler;
 use Illuminate\Support\Facades\Config;
+use Illuminate\Support\Facades\Context;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\RateLimiter;
 use Laravel\Nightwatch\Core;
 use Laravel\Nightwatch\Events\IngestingEvents;
@@ -63,6 +67,110 @@ it('reports an unhandled alert at 80% of the limit', function (): void {
         ]);
 });
 
+it('alerts at no fewer than 80% of a limit that 5 does not divide', function (): void {
+    Config::set('nightwatch.monthly_event_limit', 101);
+    countEvents(80);
+    $this->artisan(ReportCapAlerts::class);
+
+    expect(alertsSent($this->ingest))->toBeEmpty();
+
+    countEvents(1);
+    $this->artisan(ReportCapAlerts::class);
+
+    expect(array_column(alertsSent($this->ingest), 'class'))->toBe([MonthlyEventLimitApproaching::class]);
+});
+
+it('reports nothing before the first event under a limit of one', function (): void {
+    Config::set('nightwatch.monthly_event_limit', 1);
+
+    $this->artisan(ReportCapAlerts::class);
+
+    expect(alertsSent($this->ingest))->toBeEmpty();
+});
+
+it('reads a count the store returns as a numeric string', function (): void {
+    RateLimiter::shouldReceive('attempts')->with('nightwatch-events:2026-11')->andReturn('80');
+    RateLimiter::shouldReceive('increment')->andReturn(1);
+
+    $this->artisan(ReportCapAlerts::class)->assertSuccessful();
+
+    expect(array_column(alertsSent($this->ingest), 'class'))->toBe([MonthlyEventLimitApproaching::class]);
+});
+
+it('names the application Laravel when app.name is not a string', function (): void {
+    Config::set('app.name');
+    countEvents(80);
+
+    $this->artisan(ReportCapAlerts::class);
+
+    expect(alertsSent($this->ingest)[0]['message'])->toStartWith('Laravel has sent 80 ');
+});
+
+it('skips the run when the counter fails', function (string $failing): void {
+    $refused = new RuntimeException('Connection refused');
+    RateLimiter::shouldReceive('attempts')->andReturnUsing(fn (): int => $failing === 'attempts' ? throw $refused : 100);
+    RateLimiter::shouldReceive('increment')->andThrow($refused);
+
+    Log::shouldReceive('warning')
+        ->once()
+        ->with('nightwatch.cap_alert_skipped', [
+            'reason' => 'counter_unavailable',
+            'exception' => 'Connection refused',
+        ]);
+
+    $this->artisan(ReportCapAlerts::class)->assertSuccessful();
+
+    expect(alertsSent($this->ingest))->toBeEmpty();
+})->with(['attempts', 'increment']);
+
+it('keeps the runs an alert gets while Nightwatch is disabled', function (): void {
+    countEvents(100);
+    $nightwatch = resolve(Core::class);
+
+    $nightwatch->config['enabled'] = false;
+    foreach (range(1, ReportCapAlerts::REPORTS_PER_ALERT) as $run) {
+        $this->artisan(ReportCapAlerts::class)->assertSuccessful();
+    }
+
+    $nightwatch->config['enabled'] = true;
+    $this->artisan(ReportCapAlerts::class);
+
+    expect(alertsSent($this->ingest))->toHaveCount(1);
+});
+
+it('records nothing and samples no job while the application decides whether to report the alert', function (): void {
+    $seen = [];
+    $this->app->instance(ExceptionHandler::class, new class($this->app, function () use (&$seen): void {
+        $seen = [
+            'paused' => resolve(Core::class)->paused(),
+            'sampling in context' => Context::getHidden('nightwatch_should_sample'),
+            'digests when the buffer is full' => $this->ingest->digestsWhenBufferIsFull,
+        ];
+    }) extends Handler
+    {
+        public function __construct($container, private readonly Closure $observe)
+        {
+            parent::__construct($container);
+        }
+
+        public function shouldReport(Throwable $e): bool
+        {
+            ($this->observe)();
+
+            return parent::shouldReport($e);
+        }
+    });
+    countEvents(100);
+
+    $this->artisan(ReportCapAlerts::class);
+
+    expect($seen)->toBe([
+        'paused' => true,
+        'sampling in context' => false,
+        'digests when the buffer is full' => false,
+    ])->and(alertsSent($this->ingest))->toHaveCount(1);
+});
+
 it('reports the limit reached in place of the 80% alert', function (): void {
     countEvents(130);
 
@@ -73,7 +181,7 @@ it('reports the limit reached in place of the 80% alert', function (): void {
             'class' => MonthlyEventLimitReached::class,
             'code' => '202611',
             'handled' => false,
-            'message' => 'acme-app has sent 130 Nightwatch events for 2026-11, past its limit of 100, and sends nothing more until the month rolls over. Raise nightwatch.monthly_event_limit or lower a sample rate to resume.',
+            'message' => 'acme-app has sent 130 Nightwatch events for 2026-11, past its limit of 100, and sends nothing more until the month rolls over. Raise nightwatch.monthly_event_limit above the count to resume before then.',
         ]);
 });
 
@@ -84,7 +192,8 @@ it('reports each alert on three runs, then stops', function (): void {
         $this->artisan(ReportCapAlerts::class)->assertSuccessful();
     }
 
-    expect(alertsSent($this->ingest))->toHaveCount(ReportCapAlerts::REPORTS_PER_ALERT);
+    expect(alertsSent($this->ingest))->toHaveCount(ReportCapAlerts::REPORTS_PER_ALERT)
+        ->and(array_unique(array_column(alertsSent($this->ingest), '_group')))->toHaveCount(1);
 });
 
 it('reports the limit reached even after the 80% alert ran out of reports', function (): void {
@@ -113,7 +222,8 @@ it('codes each month apart, so each month opens its own issue', function (): voi
     countEvents(100, '2026-12');
     $this->artisan(ReportCapAlerts::class);
 
-    expect(array_column(alertsSent($this->ingest), 'code'))->toBe(['202611', '202612']);
+    expect(array_column(alertsSent($this->ingest), 'code'))->toBe(['202611', '202612'])
+        ->and(array_unique(array_column(alertsSent($this->ingest), '_group')))->toHaveCount(2);
 });
 
 it('discards the rest of the run after reporting', function (): void {

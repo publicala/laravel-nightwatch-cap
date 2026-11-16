@@ -46,13 +46,17 @@ Every five minutes the scheduler runs `nightwatch-cap:report-alerts`, which repo
 | The limit | `Publicala\NightwatchCap\Exceptions\MonthlyEventLimitReached` |
 
 ```text
-acme-app has sent 8,000,000 Nightwatch events for 2026-11, past its limit of 8,000,000, and sends nothing more until the month rolls over. Raise nightwatch.monthly_event_limit or lower a sample rate to resume.
+acme-app has sent 8,000,000 Nightwatch events for 2026-11, past its limit of 8,000,000, and sends nothing more until the month rolls over. Raise nightwatch.monthly_event_limit above the count to resume before then.
 ```
 
 - **Each month opens its own issue.** The exception code is the month (`202611`), and Nightwatch groups exceptions by class, code, file and line. A new issue reaches the channels the application's Nightwatch notifications go to.
 - **An alert goes out past the limit.** Nightwatch sends an unhandled exception at once, in a batch of its own. The cap lets a batch that holds only one alert through, uncounted, and drops a batch that carries anything else.
-- **An alert is reported on three runs.** Nightwatch confirms nothing about a report, so the first three runs past a threshold each report it, and the repeats land in the same issue. The limit reached is reported even when the 80% alert was not.
-- **The runs themselves cost no events.** The schedule entry samples them at zero, and a run that reports samples only the report.
+- **An alert gets up to three reporting attempts.** Nightwatch confirms nothing about a report, so the first three runs past a threshold each report it, and the repeats land in the same issue. Delivery and notification still depend on Nightwatch and on the application's exception handling: an application whose handler does not report the exception gets no alert, and a redaction callback can change what arrives. The limit reached is reported even when the 80% alert was not.
+- **A run sends only its alert.** The schedule entry samples the run at zero. A run that reports samples the report alone: what the application records while deciding whether to report it is ignored, and a job it dispatches is not sampled.
+- **A run with Nightwatch disabled reports nothing and uses none of the attempts.**
+- **A run whose counter fails reports nothing.** It logs `nightwatch.cap_alert_skipped` with the reason `counter_unavailable` and uses none of the attempts.
+
+The count never goes down within a month and includes the batches the cap dropped. To resume sending before the month rolls over, raise `nightwatch.monthly_event_limit` above the count. A lower sample rate only slows the count toward the next limit.
 
 An application that runs no scheduler gets no alerts. A threshold crossed in the last five minutes of a month is not reported, since the next run reads the new month's count.
 
