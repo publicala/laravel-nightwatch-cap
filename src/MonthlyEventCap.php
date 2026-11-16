@@ -6,6 +6,8 @@ namespace Publicala\NightwatchCap;
 
 use Illuminate\Support\Facades\Log;
 use Laravel\Nightwatch\Events\IngestingEvents;
+use Publicala\NightwatchCap\Exceptions\MonthlyEventLimitApproaching;
+use Publicala\NightwatchCap\Exceptions\MonthlyEventLimitReached;
 use Throwable;
 
 /**
@@ -22,6 +24,10 @@ final readonly class MonthlyEventCap
 
     public function __invoke(IngestingEvents $event): ?false
     {
+        if ($this->isCapAlert($event)) {
+            return null;
+        }
+
         $limit = $this->counter->limit();
 
         // Nightwatch drops the batch, and reports nothing, when this listener
@@ -50,5 +56,21 @@ final readonly class MonthlyEventCap
         }
 
         return false;
+    }
+
+    /**
+     * A cap alert is reported on its own, as an unhandled exception that Nightwatch
+     * sends at once in a batch of one. It goes out past the limit, uncounted.
+     */
+    private function isCapAlert(IngestingEvents $event): bool
+    {
+        if (count($event->records) !== 1) {
+            return false;
+        }
+
+        $record = $event->records[0];
+
+        return ($record['t'] ?? null) === 'exception'
+            && in_array($record['class'] ?? null, [MonthlyEventLimitApproaching::class, MonthlyEventLimitReached::class], true);
     }
 }

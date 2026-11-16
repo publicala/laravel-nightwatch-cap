@@ -36,6 +36,26 @@ The month is the calendar month in the application's timezone. A Nightwatch bill
 
 Other `IngestingEvents` listeners still run for a batch under the limit. The package registers its listener before the application's own providers boot, so a listener the application registers runs after it.
 
+## Alerts
+
+Every five minutes the scheduler runs `nightwatch-cap:report-alerts`, which reports the month's count to Nightwatch as an unhandled exception once it reaches a threshold:
+
+| Count | Exception |
+| --- | --- |
+| 80% of the limit | `Publicala\NightwatchCap\Exceptions\MonthlyEventLimitApproaching` |
+| The limit | `Publicala\NightwatchCap\Exceptions\MonthlyEventLimitReached` |
+
+```text
+acme-app has sent 8,000,000 Nightwatch events for 2026-11, past its limit of 8,000,000, and sends nothing more until the month rolls over. Raise nightwatch.monthly_event_limit or lower a sample rate to resume.
+```
+
+- **Each month opens its own issue.** The exception code is the month (`202611`), and Nightwatch groups exceptions by class, code, file and line. A new issue reaches the channels the application's Nightwatch notifications go to.
+- **An alert goes out past the limit.** Nightwatch sends an unhandled exception at once, in a batch of its own. The cap lets a batch that holds only one alert through, uncounted, and drops a batch that carries anything else.
+- **An alert is reported on three runs.** Nightwatch confirms nothing about a report, so the first three runs past a threshold each report it, and the repeats land in the same issue. The limit reached is reported even when the 80% alert was not.
+- **The runs themselves cost no events.** The schedule entry samples them at zero, and a run that reports samples only the report.
+
+An application that runs no scheduler gets no alerts. A threshold crossed in the last five minutes of a month is not reported, since the next run reads the new month's count.
+
 ## Configuration
 
 Set the limit in `config/nightwatch.php`, next to Nightwatch's own keys:

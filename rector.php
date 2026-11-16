@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 use Rector\Caching\ValueObject\Storage\FileCacheStorage;
 use Rector\Config\RectorConfig;
+use RectorLaravel\Rector\Class_\DescriptionPropertyToDescriptionAttributeRector;
+use RectorLaravel\Rector\Class_\SignaturePropertyToSignatureAttributeRector;
 use RectorLaravel\Set\LaravelSetList;
 
 return RectorConfig::configure()
@@ -34,4 +36,9 @@ return RectorConfig::configure()
         privatization: true,
         earlyReturn: true,
     )
+    // Console attributes exist only from Laravel 13, and the package supports 12.
+    ->withSkip([
+        DescriptionPropertyToDescriptionAttributeRector::class,
+        SignaturePropertyToSignatureAttributeRector::class,
+    ])
     ->withPhpSets();
