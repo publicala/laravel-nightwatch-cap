@@ -302,12 +302,45 @@ it('reports again the next month after this month ran out of reports', function 
 it('reads the count and keeps its reports in the configured store', function (): void {
     Config::set('cache.stores.counter', ['driver' => 'array']);
     Config::set('nightwatch.event_limit_cache_store', 'counter');
-    new Illuminate\Cache\RateLimiter(Cache::store('counter'))->increment('nightwatch-events:2026-11', 60 * 60 * 24 * 32, 100);
+    $counter = new Illuminate\Cache\RateLimiter(Cache::store('counter'));
+    $counter->increment('nightwatch-events:2026-11', 60 * 60 * 24 * 32, 100);
+
+    $reports = 'nightwatch-cap-alert:2026-11:MonthlyEventLimitReached:100';
 
     runAlerts(4);
 
     expect(alertsSent($this->ingest))->toHaveCount(ReportCapAlerts::REPORTS_PER_ALERT)
-        ->and(RateLimiter::attempts('nightwatch-events:2026-11'))->toBe(0);
+        ->and(RateLimiter::attempts('nightwatch-events:2026-11'))->toBe(0)
+        ->and($counter->attempts($reports))->toBe(4)
+        ->and(RateLimiter::attempts($reports))->toBe(0)
+        ->and(RateLimiter::attempts("{$reports}:lock"))->toBe(0);
+});
+
+it('leaves the report to a scheduler whose agent is reachable', function (): void {
+    countEvents(100);
+    $this->ingest->pingFailure = new RuntimeException('Connection refused');
+
+    Log::shouldReceive('warning')
+        ->once()
+        ->with('nightwatch.cap_alert_skipped', [
+            'reason' => 'agent_unreachable',
+            'exception' => 'Connection refused',
+        ]);
+
+    $this->artisan(ReportCapAlerts::class)->assertSuccessful();
+    $this->ingest->pingFailure = null;
+    $this->artisan(ReportCapAlerts::class)->assertSuccessful();
+
+    expect(alertsSent($this->ingest))->toHaveCount(1);
+});
+
+it('reports even when the logger fails', function (): void {
+    countEvents(100);
+    Log::shouldReceive('warning')->andThrow(new RuntimeException('Disk full'));
+
+    $this->artisan(ReportCapAlerts::class)->assertSuccessful();
+
+    expect(alertsSent($this->ingest))->toHaveCount(1);
 });
 
 it('logs each report locally', function (): void {
@@ -337,25 +370,47 @@ it('skips the run when the limit is not a whole number', function (): void {
     expect(alertsSent($this->ingest))->toBeEmpty();
 });
 
-it('hands back the sampling it found when called from a sampled request or job', function (): void {
+it('records nothing of its own and hands back the sampling it found when called from a sampled request or job', function (): void {
     countEvents(100);
     resolve(Core::class)->sample();
+    $this->ingest->flush();
 
     $this->artisan(ReportCapAlerts::class);
 
     expect(resolve(Core::class)->sampling())->toBeTrue()
+        ->and(resolve(Core::class)->paused())->toBeFalse()
         ->and($this->ingest->digestsWhenBufferIsFull)->toBeTrue()
+        ->and(Context::getHidden('nightwatch_should_sample'))->toBeTrue()
+        ->and($this->ingest->buffered)->toBeEmpty()
         ->and(alertsSent($this->ingest))->toHaveCount(1);
 });
 
-it('neither schedules nor reports when Nightwatch left Core unbound', function (): void {
+it('keeps the sampling Nightwatch::ignore() passes to queued jobs when called inside it', function (): void {
+    countEvents(100);
+    $nightwatch = resolve(Core::class);
+    $nightwatch->sample();
+
+    $seen = $nightwatch->ignore(function () use ($nightwatch): array {
+        $this->artisan(ReportCapAlerts::class);
+
+        return [$nightwatch->sampling(), $nightwatch->paused(), Context::getHidden('nightwatch_should_sample')];
+    });
+
+    expect($seen)->toBe([true, true, false])
+        ->and(alertsSent($this->ingest))->toHaveCount(1);
+});
+
+it('neither schedules nor reports when Nightwatch left Core unbound, and keeps the other scheduled tasks', function (): void {
     countEvents(100);
     $this->app->offsetUnset(Core::class);
     $this->app->forgetInstance(Schedule::class);
+    $this->app->resolving(Schedule::class, fn (Schedule $schedule) => $schedule->command('inspire')->hourly());
 
     $this->artisan(ReportCapAlerts::class)->assertSuccessful();
 
-    expect(resolve(Schedule::class)->events())->toBeEmpty()
+    expect(array_map(fn (ScheduledEvent $event): string => (string) $event->command, resolve(Schedule::class)->events()))
+        ->toHaveCount(1)
+        ->sequence(fn ($command) => $command->toContain('inspire'))
         ->and(alertsSent($this->ingest))->toBeEmpty();
 });
 

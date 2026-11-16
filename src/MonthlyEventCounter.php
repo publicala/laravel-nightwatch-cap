@@ -39,14 +39,15 @@ final readonly class MonthlyEventCounter
 
     /**
      * @throws InvalidArgumentException when nightwatch.monthly_event_limit holds
-     *                                  anything but a whole number
+     *                                  anything but a whole number: an int of zero
+     *                                  or more, or a string of digits
      */
     public function limit(): int
     {
         $limit = $this->config->get('nightwatch.monthly_event_limit', MonthlyEventCap::DEFAULT_LIMIT);
 
         return match (true) {
-            is_int($limit) => $limit,
+            is_int($limit) && $limit >= 0 => $limit,
             is_string($limit) && ctype_digit($limit) => (int) $limit,
             default => throw new InvalidArgumentException('nightwatch.monthly_event_limit must be a whole number.'),
         };

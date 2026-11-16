@@ -24,17 +24,23 @@ Nightwatch dispatches `Laravel\Nightwatch\Events\IngestingEvents` before it send
   nightwatch.ingest_capped {"reason":"monthly_event_limit_reached","limit":1000000}
   ```
 
-- **Lets the batch through uncounted** when a cache call throws or the limit is not a whole number, because Nightwatch drops a batch whose listener throws and reports nothing. Each failure logs a warning, with the reason `counter_unavailable` or `invalid_limit`:
+- **Lets the batch through uncounted** when a cache call throws, because Nightwatch drops a batch whose listener throws and reports nothing. Each failure logs a warning:
 
   ```text
   nightwatch.ingest_uncounted {"reason":"counter_unavailable","exception":"Connection refused"}
   ```
 
-  A logger that throws does not stop the batch either. The warnings are best effort.
+- **Counts the batch and lets it through** when the limit is not a whole number: an int of zero or more, or a string of digits such as `env()` returns. Each batch logs a warning until the limit is fixed:
+
+  ```text
+  nightwatch.ingest_uncapped {"reason":"invalid_limit","exception":"nightwatch.monthly_event_limit must be a whole number."}
+  ```
+
+A logger that throws stops no batch. The warnings are best effort.
 
 Nightwatch ignores everything an application records while an `IngestingEvents` listener runs, so neither warning reaches Nightwatch. Read them in your application logs.
 
-The month is the calendar month in `app.timezone`, whatever timezone the process runs in at the time. A Nightwatch billing cycle starts on the plan's start date, so the cap bounds a different window than the invoice.
+The month is the calendar month in `app.timezone`, read on each batch, whatever timezone the process runs in. A Nightwatch billing cycle starts on the plan's start date, so the cap bounds a different window than the invoice.
 
 Other `IngestingEvents` listeners still run for a batch under the limit. The package registers its listener before the application's own providers boot, so a listener the application registers runs after it.
 
@@ -57,18 +63,19 @@ The count is what the application tried to send, the batches the cap dropped inc
 - **An alert goes out past the limit.** Nightwatch sends an unhandled exception at once, in a batch of its own. The cap lets a batch that holds only one alert through, uncounted, and drops a batch that carries anything else.
 - **An alert gets up to three reports, at least four minutes apart.** Nightwatch confirms nothing about a report, so the first three runs past a threshold each report it, and the repeats land in the same issue. The first report takes a four-minute lock in the counter's store, so several servers running the schedule still report once per run. The limit reached is reported even when the 80% alert was not.
 - **Raising the limit re-arms both alerts.** Reports are counted per month, alert and limit, so the count reaching a raised limit reports again.
-- **Each report logs a warning** in the application logs, a trace that does not depend on Nightwatch:
+- **A scheduler whose agent is down leaves the report to the others.** Before it takes the lock, the run pings Nightwatch's agent. A run that cannot reach it logs `nightwatch.cap_alert_skipped` with the reason `agent_unreachable` and uses none of the reports.
+- **Each report handed to Nightwatch logs a warning** in the application logs, a trace that does not depend on Nightwatch:
 
   ```text
   nightwatch.cap_alert_reported {"alert":"Publicala\\NightwatchCap\\Exceptions\\MonthlyEventLimitReached","report":1,"message":"..."}
   ```
 
-- **Delivery and notification depend on Nightwatch and on the application's exception handling.** The report goes through Nightwatch's agent, so an agent that is down loses it. Nightwatch asks the application's exception handler whether to report it (`shouldReport()`: `dontReport`, `throttle`), so a handler that declines it sends no alert. `reportable()` callbacks do not run. A redaction callback can change what arrives.
-- **A run sends only its alert.** The schedule entry samples the run at zero. A run that reports samples the report alone: what the application records while deciding whether to report it is ignored, and a job it dispatches is not sampled.
+- **Delivery and notification depend on Nightwatch and on the application's exception handling.** The report goes through Nightwatch's agent, so an agent that fails after the ping loses it. Nightwatch asks the application's exception handler whether to report it (`shouldReport()`: `dontReport`, `throttle`), so a handler that declines it sends no alert. `reportable()` callbacks do not run. A redaction callback can change what arrives.
+- **A scheduled run sends only its alert.** The schedule entry samples the run at zero. The command records nothing of its own: what the application records while it runs, or while deciding whether to report the alert, is ignored, and a job it dispatches is not sampled. Run by hand, the command is sampled like any other command.
 - **A run with Nightwatch disabled reports nothing and uses none of the attempts.**
 - **A run whose counter fails, or whose limit is not a whole number, reports nothing.** It logs `nightwatch.cap_alert_skipped` with the reason `counter_unavailable` or `invalid_limit` and uses none of the attempts.
 - **No schedule entry without Nightwatch.** When Nightwatch's provider fails to register, the package schedules nothing and the command does nothing, so the application's other scheduled tasks still run.
-- **Called from a request or job, the command hands back the sampling it found.** The scheduler runs it in a process of its own.
+- **Called from a request or job, the command hands back the sampling it found**, and the sampling that an enclosing `Nightwatch::ignore()` passes to queued jobs. The scheduler runs it in a process of its own.
 
 The package never lowers the count. To resume sending before the month rolls over, raise `nightwatch.monthly_event_limit` above the count and restart every process that booted with the old limit (`queue:restart`, `octane:reload`). A lower sample rate only slows the count toward the next limit.
 
@@ -79,8 +86,10 @@ An application that runs no scheduler gets no alerts. A threshold crossed in the
 Set the limit in `config/nightwatch.php`, next to Nightwatch's own keys:
 
 ```php
-'monthly_event_limit' => (int) env('NIGHTWATCH_MONTHLY_EVENT_LIMIT', 1_000_000),
+'monthly_event_limit' => env('NIGHTWATCH_MONTHLY_EVENT_LIMIT', 1_000_000),
 ```
+
+Leave the value uncast. An `(int)` cast reads an empty or mistyped variable as `0`, which drops every batch, where the package lets an invalid limit through and logs it.
 
 Add `event_limit_cache_store` only to keep the count in a store of its own, such as `'event_limit_cache_store' => 'nightwatch'`. The key moves the count: a store other than the one that held it starts the month again from zero.
 

@@ -14,9 +14,9 @@ Everything here is readable outside the company. Never name a customer, an inter
 
 ## Rules the code depends on
 
-- The counter key is `nightwatch-events:Y-m` and its decay is 31 days. Applications that adopt the package keep counting from the value already in their store, so neither changes without a migration plan.
+- The counter key is `nightwatch-events:Y-m`, `Y-m` in `app.timezone`, and its decay is 32 days. Applications that adopt the package keep counting from the value already in their store, so neither changes without a migration plan.
 - The listener returns `null` or `false`, never `true`. Nightwatch dispatches through `Event::until()`, and any other non-null value stops the listeners after it.
-- A throwing listener makes Nightwatch drop the batch and report nothing. A cache call that throws is caught and logged, and the batch goes through uncounted.
+- A throwing listener makes Nightwatch drop the batch and report nothing. A cache call that throws is caught and logged, and the batch goes through uncounted. An invalid limit is logged, and the batch goes through counted.
 - Configuration lives under the application's `nightwatch.*` keys. The package ships no config file.
 
 ## Pointers

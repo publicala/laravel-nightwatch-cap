@@ -31,18 +31,19 @@ final readonly class MonthlyEventCap
         }
 
         // Nightwatch drops the batch, and reports nothing, when this listener
-        // throws. A limit or counter that fails lets the batch through uncounted.
-        try {
-            $limit = $this->counter->limit();
-        } catch (Throwable $throwable) {
-            return $this->letThroughUncounted('invalid_limit', $throwable);
-        }
-
+        // throws. A counter that fails lets the batch through uncounted, and an
+        // invalid limit lets it through counted.
         try {
             $count = $event->eventCount();
             $ingested = $this->counter->add($count);
         } catch (Throwable $throwable) {
-            return $this->letThroughUncounted('counter_unavailable', $throwable);
+            return $this->letThrough('nightwatch.ingest_uncounted', 'counter_unavailable', $throwable);
+        }
+
+        try {
+            $limit = $this->counter->limit();
+        } catch (Throwable $throwable) {
+            return $this->letThrough('nightwatch.ingest_uncapped', 'invalid_limit', $throwable);
         }
 
         if ($ingested <= $limit) {
@@ -59,9 +60,9 @@ final readonly class MonthlyEventCap
         return false;
     }
 
-    private function letThroughUncounted(string $reason, Throwable $throwable): null
+    private function letThrough(string $message, string $reason, Throwable $throwable): null
     {
-        $this->warn('nightwatch.ingest_uncounted', [
+        $this->warn($message, [
             'reason' => $reason,
             'exception' => $throwable->getMessage(),
         ]);

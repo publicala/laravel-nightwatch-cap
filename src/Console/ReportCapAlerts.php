@@ -39,14 +39,16 @@ final class ReportCapAlerts extends Command
         $sampling = $nightwatch->sampling();
 
         // The scheduler runs the command in a process of its own, unsampled. Called
-        // from a request or job instead, it hands back the sampling it found.
-        try {
-            $nightwatch->dontSample();
-
-            $this->reportDueAlert($counter, $nightwatch, $config);
-        } finally {
-            $sampling ? $nightwatch->sample() : $nightwatch->dontSample();
-        }
+        // from a request or job instead, it records nothing of its own and hands
+        // back the sampling it found. ignore() restores the sampling it passes to
+        // queued jobs.
+        $nightwatch->ignore(function () use ($counter, $nightwatch, $config, $sampling): void {
+            try {
+                $this->reportDueAlert($counter, $nightwatch, $config);
+            } finally {
+                $sampling ? $nightwatch->sample() : $nightwatch->dontSample();
+            }
+        });
     }
 
     /**
@@ -66,8 +68,10 @@ final class ReportCapAlerts extends Command
             return;
         }
 
+        $month = $counter->month();
+
         try {
-            [$alert, $report] = $this->dueAlert($counter, $config, $limit) ?? [null, null];
+            $alert = $this->dueAlert($counter, $config, $month, $limit);
         } catch (Throwable $throwable) {
             $this->skip('counter_unavailable', $throwable);
 
@@ -78,12 +82,33 @@ final class ReportCapAlerts extends Command
             return;
         }
 
+        // A scheduler whose agent is down must not take a report from one whose
+        // agent can send it.
+        try {
+            $nightwatch->ingest->ping();
+        } catch (Throwable $throwable) {
+            $this->skip('agent_unreachable', $throwable);
+
+            return;
+        }
+
+        try {
+            $report = $counter->recordAlert($month, class_basename($alert), $limit);
+        } catch (Throwable $throwable) {
+            $this->skip('counter_unavailable', $throwable);
+
+            return;
+        }
+
+        if ($report === null || $report > self::REPORTS_PER_ALERT) {
+            return;
+        }
+
         $nightwatch->sample();
         $nightwatch->ingest->shouldDigestWhenBufferIsFull(false);
         $nightwatch->ignore(fn () => $nightwatch->report($alert, handled: false));
-        $nightwatch->dontSample();
 
-        Log::warning('nightwatch.cap_alert_reported', [
+        $this->logWarning('nightwatch.cap_alert_reported', [
             'alert' => $alert::class,
             'report' => $report,
             'message' => $alert->getMessage(),
@@ -91,39 +116,41 @@ final class ReportCapAlerts extends Command
     }
 
     /**
-     * The alert for the month's count and the number of its report, unless another
-     * process reported it in the last four minutes, or it went out on every report
-     * it gets.
-     *
-     * @return array{RuntimeException, int}|null
+     * The alert the month's count has reached, if any.
      */
-    private function dueAlert(MonthlyEventCounter $counter, Repository $config, int $limit): ?array
+    private function dueAlert(MonthlyEventCounter $counter, Repository $config, string $month, int $limit): ?RuntimeException
     {
-        $month = $counter->month();
         $events = $counter->count($month);
         $application = $config->get('app.name');
         $application = is_string($application) ? $application : 'Laravel';
 
-        $alert = match (true) {
+        return match (true) {
             $events >= $limit => new MonthlyEventLimitReached($application, $month, $events, $limit),
             $events >= $limit - intdiv($limit, 5) => new MonthlyEventLimitApproaching($application, $month, $events, $limit),
             default => null,
         };
-
-        if ($alert === null) {
-            return null;
-        }
-
-        $report = $counter->recordAlert($month, class_basename($alert), $limit);
-
-        return $report === null || $report > self::REPORTS_PER_ALERT ? null : [$alert, $report];
     }
 
     private function skip(string $reason, Throwable $throwable): void
     {
-        Log::warning('nightwatch.cap_alert_skipped', [
+        $this->logWarning('nightwatch.cap_alert_skipped', [
             'reason' => $reason,
             'exception' => $throwable->getMessage(),
         ]);
+    }
+
+    /**
+     * A logger that throws would fail the scheduled run, or the request or job
+     * that called the command, so the warning is best effort.
+     *
+     * @param  array<string, mixed>  $context
+     */
+    private function logWarning(string $message, array $context): void
+    {
+        try {
+            Log::warning($message, $context);
+        } catch (Throwable) {
+            //
+        }
     }
 }

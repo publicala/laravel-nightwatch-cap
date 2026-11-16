@@ -179,25 +179,32 @@ it('reads a limit written as a numeric string', function (): void {
         ->and(Event::until(requests(1)))->toBeFalse();
 });
 
-it('lets the batch through uncounted when the limit is not a whole number', function (mixed $limit): void {
+it('counts the batch and lets it through when the limit is not a whole number', function (mixed $limit): void {
     Config::set('nightwatch.monthly_event_limit', $limit);
 
     Log::shouldReceive('warning')
         ->once()
-        ->with('nightwatch.ingest_uncounted', [
+        ->with('nightwatch.ingest_uncapped', [
             'reason' => 'invalid_limit',
             'exception' => 'nightwatch.monthly_event_limit must be a whole number.',
         ]);
 
     expect(Event::until(requests(1)))->toBeNull()
-        ->and(RateLimiterFacade::attempts('nightwatch-events:2026-11'))->toBe(0);
-})->with([null, 'lots', 1.5]);
+        ->and(RateLimiterFacade::attempts('nightwatch-events:2026-11'))->toBe(1);
+})->with([null, 'lots', 1.5, -5, '-5', ' 100', '1e6', '']);
 
 it('lets the batch through even when the logger fails', function (): void {
     RateLimiterFacade::shouldReceive('increment')->andThrow(new RuntimeException('Connection refused'));
     Log::shouldReceive('warning')->andThrow(new RuntimeException('Disk full'));
 
     expect(Event::until(requests(1)))->toBeNull();
+});
+
+it('drops the batch that crosses the limit even when the logger fails', function (): void {
+    Config::set('nightwatch.monthly_event_limit', 1);
+    Log::shouldReceive('warning')->andThrow(new RuntimeException('Disk full'));
+
+    expect(Event::until(requests(2)))->toBeFalse();
 });
 
 it('lets the listeners registered after it run under the limit', function (): void {
